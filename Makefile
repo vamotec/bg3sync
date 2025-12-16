@@ -94,10 +94,14 @@ dev:
 test:
 	go test -v ./...
 
-# 打包发布版本
+# 打包发布版本 (跨平台)
 package: build-windows-debug
 	@echo "打包发布版本..."
+ifeq ($(OS),Windows_NT)
+	@powershell -ExecutionPolicy Bypass -File scripts/package.ps1 -Version $(VERSION)
+else
 	@bash scripts/package.sh $(VERSION)
+endif
 
 # 清理
 clean:

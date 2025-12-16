@@ -38,10 +38,10 @@ jobs:
           make build-windows-debug
 
       - name: Package Release
-        shell: bash
+        shell: pwsh
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          bash scripts/package.sh "$VERSION"
+          $VERSION = "${{ steps.version.outputs.version }}"
+          .\scripts\package.ps1 -Version $VERSION
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
