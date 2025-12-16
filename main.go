@@ -25,8 +25,17 @@ type Config struct {
 }
 
 func main() {
+	// 初始化日志系统
+	logFile, err := initLogger()
+	if err != nil {
+		log.Printf("警告: 日志初始化失败: %v\n", err)
+	} else {
+		defer logFile.Close()
+	}
+
 	// 可以在日志或关于对话框中显示版本
 	log.Printf("BG3 存档同步客户端 v%s (构建时间: %s)\n", Version, BuildTime)
+
 	// 创建 Fyne 应用
 	a := app.NewWithID("com.mosia.bg3sync")
 	a.SetIcon(resourceIconPng) // 你的图标

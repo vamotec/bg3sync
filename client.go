@@ -244,6 +244,7 @@ func (c *Client) StartWatching() error {
 	}
 	c.watcher = watcher
 
+	// 监听事件处理
 	go func() {
 		debouncer := NewDebouncer(2 * time.Second)
 
@@ -268,6 +269,14 @@ func (c *Client) StartWatching() error {
 						continue
 					}
 
+					// 如果检测到新创建的文件夹，添加到监听列表
+					if event.Has(fsnotify.Create) {
+						if info, err := os.Stat(saveFolderPath); err == nil && info.IsDir() {
+							log.Printf("检测到新存档文件夹，添加监听: %s\n", saveFolderPath)
+							watcher.Add(saveFolderPath)
+						}
+					}
+
 					// 只在开启自动同步且游戏运行时上传
 					if !c.config.AutoSync || !c.gameRunning {
 						continue
@@ -287,7 +296,30 @@ func (c *Client) StartWatching() error {
 		}
 	}()
 
-	return watcher.Add(c.config.SavePath)
+	// 添加主目录监听
+	if err := watcher.Add(c.config.SavePath); err != nil {
+		return err
+	}
+
+	// 递归添加所有已存在的 __HonourMode 子目录到监听列表
+	entries, err := os.ReadDir(c.config.SavePath)
+	if err != nil {
+		log.Printf("读取存档目录失败: %v\n", err)
+		return nil // 不返回错误，继续运行
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasSuffix(entry.Name(), "__HonourMode") {
+			subDir := filepath.Join(c.config.SavePath, entry.Name())
+			if err := watcher.Add(subDir); err != nil {
+				log.Printf("添加子目录监听失败 %s: %v\n", subDir, err)
+			} else {
+				log.Printf("已添加存档目录监听: %s\n", entry.Name())
+			}
+		}
+	}
+
+	return nil
 }
 
 func (c *Client) handleSaveFolder(folderPath string) {

@@ -33,21 +33,21 @@ jobs:
             echo "version=dev-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
           fi
 
-      - name: Build
+      - name: Build Debug Version
         run: |
-          make build-windows
+          make build-windows-debug
 
-      - name: Prepare artifact
+      - name: Package Release
         shell: bash
         run: |
-          mkdir -p dist
-          cp bin/bg3-sync.exe dist/bg3sync-windows-amd64.exe
+          VERSION="${{ steps.version.outputs.version }}"
+          bash scripts/package.sh "$VERSION"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bg3sync-windows-amd64
-          path: dist/*
+          name: bg3sync-windows-amd64-${{ steps.version.outputs.version }}
+          path: dist/*.zip
 
   release:
     name: Create Release
@@ -78,14 +78,32 @@ jobs:
           prerelease: false
           generate_release_notes: true
           body: |
-            ## BG3 存档同步客户端 ${{ github.ref_name }}
+            ## BG3 存档同步客户端 ${{ github.ref_name }} (Debug版本)
 
             ### 下载说明
-            下载 `bg3sync-windows-amd64.exe` 即可使用
+
+            下载 `bg3sync-windows-amd64-*.zip` 压缩包，解压后运行 `bg3-sync.exe`
+
+            **包含内容**：
+            - bg3-sync.exe - 主程序
+            - README.md - 详细使用文档
+            - 使用说明.txt - 快速入门
+
+            **Debug 版本特点**：
+            - 运行时显示控制台窗口，可查看实时日志
+            - 日志自动保存到 `%APPDATA%\BG3SyncClient\logs\`
+            - 适合调试和问题排查
 
             ### 使用方法
-            1. 下载可执行文件并运行
-            2. 首次运行会在系统托盘显示图标
-            3. 点击托盘图标进入设置，配置 Nebula 服务器地址和存档路径
+            1. 解压下载的 zip 文件
+            2. 双击运行 bg3-sync.exe
+            3. 首次运行会在系统托盘显示图标（可能需要允许防火墙访问）
+            4. 右键点击托盘图标 → 设置，配置 Nebula 服务器地址
+            5. 勾选"自动同步"开始使用
+
+            ### 日志文件
+            程序运行日志保存在：`%APPDATA%\BG3SyncClient\logs\`
+
+            如遇到问题，请查看日志文件或在 Issues 中提交
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

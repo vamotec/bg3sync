@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -35,8 +36,8 @@ func (d *Debouncer) Do(fn func()) {
 	d.timer = time.AfterFunc(d.delay, fn)
 }
 
-// 配置管理
-func getConfigPath() string {
+// 获取应用数据目录
+func getAppDataDir() string {
 	var dir string
 	if runtime.GOOS == "windows" {
 		appData := os.Getenv("APPDATA")
@@ -47,7 +48,12 @@ func getConfigPath() string {
 		dir = filepath.Join(home, ".bg3sync")
 	}
 	os.MkdirAll(dir, 0755)
-	return filepath.Join(dir, "config.json")
+	return dir
+}
+
+// 配置管理
+func getConfigPath() string {
+	return filepath.Join(getAppDataDir(), "config.json")
 }
 
 func loadConfig() *Config {
@@ -97,6 +103,67 @@ func formatSize(bytes int64) string {
 func generateDeviceID() string {
 	hostname, _ := os.Hostname()
 	return fmt.Sprintf("%s-%d", hostname, time.Now().Unix())
+}
+
+// 初始化日志系统
+func initLogger() (*os.File, error) {
+	// 创建日志目录
+	logsDir := filepath.Join(getAppDataDir(), "logs")
+	if err := os.MkdirAll(logsDir, 0755); err != nil {
+		return nil, fmt.Errorf("创建日志目录失败: %w", err)
+	}
+
+	// 日志文件名使用日期时间
+	logFileName := fmt.Sprintf("bg3sync_%s.log", time.Now().Format("2006-01-02_15-04-05"))
+	logFilePath := filepath.Join(logsDir, logFileName)
+
+	// 打开日志文件
+	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("创建日志文件失败: %w", err)
+	}
+
+	// 设置日志输出到文件和控制台
+	multiWriter := io.MultiWriter(os.Stdout, logFile)
+	log.SetOutput(multiWriter)
+	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+
+	log.Printf("========================================\n")
+	log.Printf("日志文件: %s\n", logFilePath)
+	log.Printf("========================================\n")
+
+	// 清理旧日志文件（保留最近7天）
+	go cleanOldLogs(logsDir, 7)
+
+	return logFile, nil
+}
+
+// 清理旧日志文件
+func cleanOldLogs(logsDir string, keepDays int) {
+	entries, err := os.ReadDir(logsDir)
+	if err != nil {
+		return
+	}
+
+	cutoff := time.Now().AddDate(0, 0, -keepDays)
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		// 删除超过保留期限的日志文件
+		if info.ModTime().Before(cutoff) {
+			logPath := filepath.Join(logsDir, entry.Name())
+			os.Remove(logPath)
+			log.Printf("已删除旧日志文件: %s\n", entry.Name())
+		}
+	}
 }
 
 // 将文件夹打包为 zip

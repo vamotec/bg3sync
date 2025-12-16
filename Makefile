@@ -29,6 +29,20 @@ build-windows:
 	@echo "✓ 编译完成: $(OUTPUT_WIN)"
 	@ls -lh $(OUTPUT_WIN)
 
+# Windows Debug 版本（带控制台输出）
+build-windows-debug:
+	@echo "========================================="
+	@echo "  编译 Windows Debug 版本（带控制台）"
+	@echo "========================================="
+	@echo "版本: $(VERSION)"
+	@echo "时间: $(BUILD_TIME)"
+	@echo ""
+	@mkdir -p $(BIN_DIR)
+	GOOS=windows GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o $(OUTPUT_WIN) .
+	@echo ""
+	@echo "✓ 编译完成: $(OUTPUT_WIN)"
+	@ls -lh $(OUTPUT_WIN)
+
 # Windows 版本（使用 fyne-cross 交叉编译）
 build-windows-cross:
 	@echo "========================================="
@@ -80,10 +94,15 @@ dev:
 test:
 	go test -v ./...
 
+# 打包发布版本
+package: build-windows-debug
+	@echo "打包发布版本..."
+	@bash scripts/package.sh $(VERSION)
+
 # 清理
 clean:
 	@echo "清理编译文件..."
-	@rm -rf $(BIN_DIR)
+	@rm -rf $(BIN_DIR) dist
 	@echo "✓ 清理完成"
 
 # 帮助
