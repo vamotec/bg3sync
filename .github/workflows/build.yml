@@ -11,35 +11,8 @@ permissions:
 
 jobs:
   build:
-    name: Build for ${{ matrix.os }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      matrix:
-        include:
-          - os: windows
-            runner: windows-latest
-            goos: windows
-            goarch: amd64
-            output: bg3sync.exe
-            make-target: build-windows
-          - os: linux
-            runner: ubuntu-latest
-            goos: linux
-            goarch: amd64
-            output: bg3sync
-            make-target: build-linux
-          - os: macos
-            runner: macos-latest
-            goos: darwin
-            goarch: amd64
-            output: bg3sync
-            make-target: build-mac
-          - os: macos-arm64
-            runner: macos-latest
-            goos: darwin
-            goarch: arm64
-            output: bg3sync
-            make-target: build-mac
+    name: Build for Windows
+    runs-on: windows-latest
 
     steps:
       - name: Checkout code
@@ -49,12 +22,6 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.21'
-
-      - name: Install Linux dependencies
-        if: matrix.os == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev
 
       - name: Get version from tag
         id: version
@@ -67,27 +34,19 @@ jobs:
           fi
 
       - name: Build
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 1
         run: |
-          make ${{ matrix.make-target }}
+          make build-windows
 
       - name: Prepare artifact
         shell: bash
         run: |
           mkdir -p dist
-          if [ "${{ matrix.os }}" = "windows" ]; then
-            cp build/bg3sync.exe dist/bg3sync-${{ matrix.os }}-${{ matrix.goarch }}.exe
-          else
-            cp build/bg3sync dist/bg3sync-${{ matrix.os }}-${{ matrix.goarch }}
-          fi
+          cp build/bg3sync.exe dist/bg3sync-windows-amd64.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bg3sync-${{ matrix.os }}-${{ matrix.goarch }}
+          name: bg3sync-windows-amd64
           path: dist/*
 
   release:
@@ -122,15 +81,11 @@ jobs:
             ## BG3 存档同步客户端 ${{ github.ref_name }}
 
             ### 下载说明
-            - **Windows 用户**: 下载 `bg3sync-windows-amd64.exe`
-            - **macOS 用户 (Intel)**: 下载 `bg3sync-macos-amd64`
-            - **macOS 用户 (Apple Silicon)**: 下载 `bg3sync-macos-arm64`
-            - **Linux 用户**: 下载 `bg3sync-linux-amd64`
+            下载 `bg3sync-windows-amd64.exe` 即可使用
 
             ### 使用方法
-            1. 下载对应平台的可执行文件
-            2. Windows 用户直接运行；macOS/Linux 用户需要先添加执行权限：`chmod +x bg3sync-*`
-            3. 首次运行会在系统托盘显示图标
-            4. 点击托盘图标进入设置，配置 Nebula 服务器地址和存档路径
+            1. 下载可执行文件并运行
+            2. 首次运行会在系统托盘显示图标
+            3. 点击托盘图标进入设置，配置 Nebula 服务器地址和存档路径
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
