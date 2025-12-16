@@ -21,7 +21,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.25'
 
       - name: Get version from tag
         id: version
@@ -41,7 +41,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp build/bg3sync.exe dist/bg3sync-windows-amd64.exe
+          cp bin/bg3-sync.exe dist/bg3sync-windows-amd64.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
