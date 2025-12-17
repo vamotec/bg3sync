@@ -33,6 +33,11 @@ type Client struct {
 	lastUploadedSave *SaveGame // 最后一次上传的存档
 	lastUploadTime   time.Time // 最后一次上传的时间
 	lastModTimes     sync.Map
+
+	// 健康检查
+	healthStatus     bool         // 当前健康状态
+	lastHealthStatus bool         // 上次健康状态
+	healthLock       sync.RWMutex // 保护健康状态的锁
 }
 
 func NewClient(config *Config, app fyne.App) *Client {
@@ -40,10 +45,12 @@ func NewClient(config *Config, app fyne.App) *Client {
 	statusBar.Set("就绪")
 
 	return &Client{
-		config:    config,
-		api:       NewNebulaAPI(config.NebulaURL, config.DeviceID),
-		app:       app,
-		statusBar: statusBar,
+		config:           config,
+		api:              NewNebulaAPI(config.NebulaURL, config.DeviceID),
+		app:              app,
+		statusBar:        statusBar,
+		healthStatus:     true, // 初始假设网络正常
+		lastHealthStatus: true,
 	}
 }
 
@@ -92,6 +99,11 @@ func (c *Client) makeMainUI() fyne.CanvasObject {
 	// 状态栏
 	status := widget.NewLabelWithData(c.statusBar)
 
+	// 网络状态标签
+	healthLabel := widget.NewLabel("● 已连接")
+	healthLabel.Importance = widget.SuccessImportance
+	go c.monitorHealth(healthLabel)
+
 	// 存档列表
 	savesList := widget.NewList(
 		func() int { return 0 }, // 动态加载
@@ -99,6 +111,7 @@ func (c *Client) makeMainUI() fyne.CanvasObject {
 			return container.NewHBox(
 				widget.NewLabel(""),
 				widget.NewButton("恢复", nil),
+				widget.NewButton("删除", nil),
 			)
 		},
 		func(id widget.ListItemID, item fyne.CanvasObject) {},
@@ -139,7 +152,10 @@ func (c *Client) makeMainUI() fyne.CanvasObject {
 
 	return container.NewBorder(
 		toolbar,
-		container.NewVBox(gameStatus, status),
+		container.NewVBox(
+			container.NewHBox(gameStatus, healthLabel),
+			status,
+		),
 		nil, nil,
 		savesList,
 	)
@@ -181,9 +197,14 @@ func (c *Client) refreshSavesList(list *widget.List) {
 					formatSize(save.FileSize),
 				))
 
-				btn := box.Objects[1].(*widget.Button)
-				btn.OnTapped = func() {
+				restoreBtn := box.Objects[1].(*widget.Button)
+				restoreBtn.OnTapped = func() {
 					c.restoreSave(save)
+				}
+
+				deleteBtn := box.Objects[2].(*widget.Button)
+				deleteBtn.OnTapped = func() {
+					c.deleteSave(save, list)
 				}
 			}
 
@@ -242,6 +263,49 @@ func (c *Client) performRestore(save *SaveGame) {
 
 		c.statusBar.Set("恢复成功!")
 		dialog.ShowInformation("成功", "存档已恢复到本地", c.mainWin)
+	}()
+}
+
+func (c *Client) deleteSave(save *SaveGame, list *widget.List) {
+	// 确认对话框
+	dialog.ShowConfirm(
+		"确认删除",
+		fmt.Sprintf("确定要删除这个云端存档?\n\n时间: %s\n文件: %s\n\n此操作不可恢复!",
+			save.Timestamp.Format("2006-01-02 15:04:05"),
+			save.FileName,
+		),
+		func(ok bool) {
+			if !ok {
+				return
+			}
+
+			c.performDelete(save, list)
+		},
+		c.mainWin,
+	)
+}
+
+func (c *Client) performDelete(save *SaveGame, list *widget.List) {
+	c.statusBar.Set("正在删除存档...")
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		// 删除云端存档
+		if err := c.api.DeleteSave(ctx, save.ID); err != nil {
+			fyne.Do(func() {
+				c.statusBar.Set(fmt.Sprintf("删除失败: %v", err))
+				dialog.ShowError(err, c.mainWin)
+			})
+			return
+		}
+
+		// 删除成功，刷新列表
+		fyne.Do(func() {
+			c.statusBar.Set("删除成功!")
+			c.refreshSavesList(list)
+		})
 	}()
 }
 
@@ -665,4 +729,69 @@ func (c *Client) showSettings() {
 
 	win.SetContent(container.NewPadded(form))
 	win.Show()
+}
+
+// monitorHealth 定时检查服务器健康状态
+func (c *Client) monitorHealth(label *widget.Label) {
+	// 首次立即检查
+	c.checkHealthOnce(label)
+
+	// 定时检查（每30秒）
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		c.checkHealthOnce(label)
+	}
+}
+
+// checkHealthOnce 执行一次健康检查
+func (c *Client) checkHealthOnce(label *widget.Label) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := c.api.CheckHealth(ctx)
+
+	c.healthLock.Lock()
+	c.lastHealthStatus = c.healthStatus
+	c.healthStatus = (err == nil)
+	currentStatus := c.healthStatus
+	lastStatus := c.lastHealthStatus
+	c.healthLock.Unlock()
+
+	// 状态变化时更新 UI
+	if currentStatus != lastStatus {
+		if !currentStatus {
+			// 从正常变为异常
+			log.Printf("⚠️ 网络连接异常: %v\n", err)
+			fyne.Do(func() {
+				label.SetText("● 网络连接异常")
+				label.Importance = widget.DangerImportance
+				label.Refresh()
+
+				// 首次异常时弹窗提示
+				if c.mainWin != nil {
+					dialog.ShowError(
+						fmt.Errorf("无法连接到云端服务器，请检查网络连接或服务器地址"),
+						c.mainWin,
+					)
+				}
+			})
+		} else {
+			// 从异常恢复正常
+			log.Printf("✅ 网络连接已恢复\n")
+			fyne.Do(func() {
+				label.SetText("● 已连接")
+				label.Importance = widget.SuccessImportance
+				label.Refresh()
+			})
+		}
+	} else if !currentStatus {
+		// 持续异常，只更新 UI，不弹窗
+		fyne.Do(func() {
+			label.SetText("● 网络连接异常")
+			label.Importance = widget.DangerImportance
+			label.Refresh()
+		})
+	}
 }

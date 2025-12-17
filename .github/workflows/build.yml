@@ -33,9 +33,9 @@ jobs:
             echo "version=dev-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
           fi
 
-      - name: Build Debug Version
+      - name: Build Release Version
         run: |
-          make build-windows-debug
+          make build-windows
 
       - name: Package Release
         shell: pwsh
@@ -78,7 +78,7 @@ jobs:
           prerelease: false
           generate_release_notes: true
           body: |
-            ## BG3 存档同步客户端 ${{ github.ref_name }} (Debug版本)
+            ## BG3 存档同步客户端 ${{ github.ref_name }}
 
             ### 下载说明
 
@@ -88,11 +88,6 @@ jobs:
             - bg3-sync.exe - 主程序
             - README.md - 详细使用文档
             - 使用说明.txt - 快速入门
-
-            **Debug 版本特点**：
-            - 运行时显示控制台窗口，可查看实时日志
-            - 日志自动保存到 `%APPDATA%\BG3SyncClient\logs\`
-            - 适合调试和问题排查
 
             ### 使用方法
             1. 解压下载的 zip 文件
