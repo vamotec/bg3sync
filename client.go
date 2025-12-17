@@ -152,36 +152,42 @@ func (c *Client) refreshSavesList(list *widget.List) {
 
 		saves, err := c.api.ListSaves(ctx, 100)
 		if err != nil {
-			c.statusBar.Set(fmt.Sprintf("加载失败: %v", err))
-			dialog.ShowError(err, c.mainWin)
+			// UI 操作需要在主线程
+			fyne.Do(func() {
+				c.statusBar.Set(fmt.Sprintf("加载失败: %v", err))
+				dialog.ShowError(err, c.mainWin)
+			})
 			return
 		}
 
-		// 更新列表数据
-		list.Length = func() int { return len(saves) }
-		list.UpdateItem = func(id widget.ListItemID, item fyne.CanvasObject) {
-			if id >= len(saves) {
-				return
+		// 在主线程更新 UI
+		fyne.Do(func() {
+			// 更新列表数据
+			list.Length = func() int { return len(saves) }
+			list.UpdateItem = func(id widget.ListItemID, item fyne.CanvasObject) {
+				if id >= len(saves) {
+					return
+				}
+
+				save := saves[id]
+				box := item.(*fyne.Container)
+
+				label := box.Objects[0].(*widget.Label)
+				label.SetText(fmt.Sprintf("%s - %s (%s)",
+					save.Timestamp.Format("2006-01-02 15:04:05"),
+					save.FileName,
+					formatSize(save.FileSize),
+				))
+
+				btn := box.Objects[1].(*widget.Button)
+				btn.OnTapped = func() {
+					c.restoreSave(save)
+				}
 			}
 
-			save := saves[id]
-			box := item.(*fyne.Container)
-
-			label := box.Objects[0].(*widget.Label)
-			label.SetText(fmt.Sprintf("%s - %s (%s)",
-				save.Timestamp.Format("2006-01-02 15:04:05"),
-				save.FileName,
-				formatSize(save.FileSize),
-			))
-
-			btn := box.Objects[1].(*widget.Button)
-			btn.OnTapped = func() {
-				c.restoreSave(save)
-			}
-		}
-
-		list.Refresh()
-		c.statusBar.Set(fmt.Sprintf("已加载 %d 个存档", len(saves)))
+			list.Refresh()
+			c.statusBar.Set(fmt.Sprintf("已加载 %d 个存档", len(saves)))
+		})
 	}()
 }
 
@@ -256,16 +262,24 @@ func (c *Client) StartWatching() error {
 				}
 
 				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
+					log.Printf("📁 文件事件: %s (Op: %v)\n", event.Name, event.Op)
 					// 获取存档文件夹路径（UUID 文件夹）
 					saveFolderPath := filepath.Dir(event.Name)
+					log.Printf("📂 存档文件夹: %s\n", saveFolderPath)
 					// 确保是存档目录的直接子文件夹（UUID 文件夹）
-					if filepath.Dir(saveFolderPath) != c.config.SavePath {
+					parentDir := filepath.Dir(saveFolderPath)
+					log.Printf("📌 父目录: %s (期望: %s)\n", parentDir, c.config.SavePath)
+
+					if filepath.Clean(parentDir) != filepath.Clean(c.config.SavePath) {
+						log.Printf("⏭️  跳过: 不是直接子文件夹\n")
 						continue
 					}
 
 					// 只处理 __HonourMode 后缀的文件夹
 					folderName := filepath.Base(saveFolderPath)
+					log.Printf("📝 文件夹名: %s\n", folderName)
 					if !strings.HasSuffix(folderName, "__HonourMode") {
+						log.Printf("⏭️  跳过: 不是荣誉模式存档\n")
 						continue
 					}
 
@@ -278,13 +292,26 @@ func (c *Client) StartWatching() error {
 					}
 
 					// 只在开启自动同步且游戏运行时上传
-					if !c.config.AutoSync || !c.gameRunning {
+					log.Printf("🔧 AutoSync: %v\n", c.config.AutoSync)
+					//if !c.config.AutoSync || !c.gameRunning {
+					//	continue
+					//}
+					//只在开启自动同步时上传 (调试)
+					if !c.config.AutoSync {
+						log.Printf("⏭️  跳过: 自动同步未开启\n")
 						continue
 					}
 
+					log.Printf("⏱️  准备上传 (debounce 2s): %s\n", saveFolderPath)
 					debouncer.Do(func() {
+						log.Printf("🚀 开始上传: %s\n", saveFolderPath)
 						c.handleSaveFolder(saveFolderPath)
+						log.Printf("✅ 上传完成: %s\n", saveFolderPath)
 					})
+
+					//debouncer.Do(func() {
+					//	c.handleSaveFolder(saveFolderPath)
+					//})
 				}
 
 			case err, ok := <-watcher.Errors:
