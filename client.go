@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -31,6 +32,7 @@ type Client struct {
 	gameRunning      bool
 	lastUploadedSave *SaveGame // 最后一次上传的存档
 	lastUploadTime   time.Time // 最后一次上传的时间
+	lastModTimes     sync.Map
 }
 
 func NewClient(config *Config, app fyne.App) *Client {
@@ -262,6 +264,56 @@ func (c *Client) StartWatching() error {
 				}
 
 				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
+					// === 文件类型过滤 ===
+					// 只处理 BG3 的存档文件，忽略系统文件
+					fileName := filepath.Base(event.Name)
+					ext := filepath.Ext(fileName)
+
+					// 跳过系统文件和临时文件
+					if fileName == "Thumbs.db" ||
+						fileName == "desktop.ini" ||
+						strings.HasPrefix(fileName, ".") ||
+						strings.HasPrefix(fileName, "~") ||
+						ext == ".tmp" {
+						continue
+					}
+
+					// 只处理 BG3 相关文件（.lsv 存档文件或 .WebP 截图）
+					if ext != ".lsv" && ext != ".WebP" {
+						log.Printf("⏭️  跳过非存档文件: %s\n", fileName)
+						continue
+					}
+
+					// === 修改时间检查 ===
+					info, err := os.Stat(event.Name)
+					if err != nil {
+						log.Printf("⚠️  无法获取文件信息: %v\n", err)
+						continue
+					}
+
+					modTime := info.ModTime()
+					key := event.Name
+
+					if lastMod, ok := c.lastModTimes.Load(key); ok {
+						if lastModTime, ok := lastMod.(time.Time); ok {
+							// 如果修改时间没变，说明只是访问操作
+							if modTime.Equal(lastModTime) {
+								log.Printf("⏭️  跳过: 文件未真正修改 %s\n", fileName)
+								continue
+							}
+							// 修改时间变化太小（小于1秒），也可能是误触发
+							if modTime.Sub(lastModTime) < time.Second {
+								log.Printf("⏭️  跳过: 修改时间变化过小 %s (%.2fs)\n",
+									fileName, modTime.Sub(lastModTime).Seconds())
+								continue
+							}
+						}
+					}
+
+					// 更新最后修改时间
+					c.lastModTimes.Store(key, modTime)
+					// ======== 新增的检查过滤完成 ================
+
 					log.Printf("📁 文件事件: %s (Op: %v)\n", event.Name, event.Op)
 					// 获取存档文件夹路径（UUID 文件夹）
 					saveFolderPath := filepath.Dir(event.Name)
@@ -293,12 +345,8 @@ func (c *Client) StartWatching() error {
 
 					// 只在开启自动同步且游戏运行时上传
 					log.Printf("🔧 AutoSync: %v\n", c.config.AutoSync)
-					//if !c.config.AutoSync || !c.gameRunning {
-					//	continue
-					//}
-					//只在开启自动同步时上传 (调试)
-					if !c.config.AutoSync {
-						log.Printf("⏭️  跳过: 自动同步未开启\n")
+					if !c.config.AutoSync || !c.gameRunning {
+						log.Printf("⏭️  跳过: 自动同步未开启or游戏未运行\n")
 						continue
 					}
 
@@ -308,10 +356,6 @@ func (c *Client) StartWatching() error {
 						c.handleSaveFolder(saveFolderPath)
 						log.Printf("✅ 上传完成: %s\n", saveFolderPath)
 					})
-
-					//debouncer.Do(func() {
-					//	c.handleSaveFolder(saveFolderPath)
-					//})
 				}
 
 			case err, ok := <-watcher.Errors:
@@ -421,9 +465,16 @@ func (c *Client) monitorGameProcess(label *widget.Label) {
 		if running != c.gameRunning {
 			c.gameRunning = running
 			if running {
-				label.SetText("游戏状态: 运行中")
+				// 在主 UI 线程中更新 label
+				fyne.Do(func() {
+					label.SetText("游戏状态: 运行中")
+				})
 			} else {
-				label.SetText("游戏状态: 未运行")
+				// 在主 UI 线程中更新 label
+				fyne.Do(func() {
+					label.SetText("游戏状态: 未运行")
+				})
+
 				// 游戏退出时，删除最近10秒内上传的存档（这是游戏的自动保存）
 				if c.lastUploadedSave != nil && time.Since(c.lastUploadTime) < 10*time.Second {
 					go c.deleteLastAutoSave()
